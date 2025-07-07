@@ -1,8 +1,7 @@
 {
-	"BuildId": "23058290",
+	"BuildId": "43139311",
 	"Modules": 
 	{
-		"MinigameCore": "UnrealEditor-MinigameCore.dll",
-		"MinigameCoreEditor": "UnrealEditor-MinigameCoreEditor.dll"
+		"MinigameCore": "UnrealEditor-MinigameCore.dll"
 	}
 }

@@ -4,26 +4,26 @@
 
 #include "CoreMinimal.h"
 #include "BashGamemode.h"
-#include "ControlDisplay.h"
-#include "MinigameEnums.h"
+#include "Data/ControlDisplay.h"
+#include "Data/MinigameEnums.h"
 #include "MinigameBase.generated.h"
 
 // Forward declarations
+class AMinigameCapture;
 class UMinigameUI;
 class UPracticeModeUI;
 class APlayerSpawn;
 class UMinigameSessionSubsystem;
 class AMinigamePlayer;
 class USplitscreenUI;
-class ULevelSequence;
-class ULevelSequencePlayer;
 class UBasePointCounter;
+class UMinigameCutsceneManager;
+class UOverlaySlot;
 
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FGameStartedSignature);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FGameEndedSignature);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FGameResetSignature);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FPracticeModeEndSignature);
 
 /**
  * 
@@ -40,18 +40,6 @@ class MINIGAMECORE_API AMinigameBase : public ABashGamemode
 public:
 	AMinigameBase();
 
-	UPROPERTY(BlueprintAssignable);
-	FGameStartedSignature OnGameStart;
-
-	UPROPERTY(BlueprintAssignable)
-	FGameEndedSignature OnGameEnd;
-	
-	UPROPERTY(BlueprintAssignable)
-	FGameResetSignature OnGameReset;
-
-	UPROPERTY(BlueprintAssignable)
-	FPracticeModeEndSignature OnPracticeModeEnd;
-
 	// Readies a Player to exit practice mode
 	UFUNCTION(BlueprintCallable, Category = "Minigame|Practice")
 	void ReadyPlayer(int Player, bool state);
@@ -67,11 +55,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Minigame|Player")
 	AMinigamePlayer* GetPlayer(int PlayerNum) const;
 
+	UFUNCTION(BlueprintCallable, Category = "Minigame|Player")
+	const TArray<AMinigamePlayer*>& GetPlayers() const { return Players; }
+	
 	/**
 	*	Handles ending of the game.
-	*	@param bTransitionToPractice True if the game will transition 
+	*	@param bTransitionToPractice True if the game will transition
+	*	@param bOverrideIfInProgress Can end the game, even if the game is already ending. Used to transition
+	*	out of practice mode if practice mode is already resetting
 	*/
-	void EndGame(bool bTransitionToPractice, bool bIgnoreIfEnding = false);
+	void EndGameInternal(bool bTransitionToPractice, bool bOverrideIfInProgress = false);
 
 	// Registers a camera to be used by the splitscreen system
 	UFUNCTION(BlueprintCallable, Category = "Minigame|Splitscreen")
@@ -84,10 +77,18 @@ public:
 	// Returns the number of camera splits this gamemode should have
 	UFUNCTION(BlueprintCallable, Category = "Minigame|Splitscreen")
 	int GetNumCameraSplits() const;
-
+	
 	UPROPERTY(EditAnywhere, Category = "Debug")
 	bool DebugHideUI{};
 
+	UFUNCTION(BlueprintCallable, Category = "MinigameUI")
+	USplitscreenUI* GetMinigameWidgetRoot() const { return CurrentMinigameUI; }
+
+	UFUNCTION(BlueprintCallable, Category = "MinigameUI")
+	UOverlaySlot* AddWidgetToMinigameUISplit(UUserWidget* InWidget, int Split);
+	
+	UFUNCTION(BlueprintCallable, Category = "MinigameUI")
+	void PlayMinigameTransitionEffects();
 protected:
 	virtual void Tick(float DeltaTime) override;
 
@@ -96,6 +97,36 @@ protected:
 	void FindPlayerSpawns();
 
 	virtual void ResetLevel() override;
+
+
+public:
+	
+	// Called after players are spawned and the minigame base has initialized. Also called after every reset
+	UPROPERTY(BlueprintAssignable);
+	FGameStartedSignature OnGameStart;
+
+	// Triggered when the minigame end has been initialized, either from the timer or explicit call of EndGame()
+	UPROPERTY(BlueprintAssignable)
+	FGameEndedSignature OnGameEnd;
+
+	// Triggered right before the minigame is reset. Use this to clean up persistent state
+	UPROPERTY(BlueprintAssignable)
+	FGameResetSignature OnGameReset;
+
+protected:
+	// Also provide events as BlueprintImplementableEvent
+	// Event dispatcher allows for other actors to listen for these events
+	// Blueprint implementable event allows for the minigame base to easily listen for these events 
+public:
+	UFUNCTION(BlueprintImplementableEvent)
+	void OnMinigameStart();
+	
+	UFUNCTION(BlueprintImplementableEvent)
+	void OnMinigameEnd();
+	
+	UFUNCTION(BlueprintImplementableEvent)
+	void OnMinigameReset();
+	
 private:
 	// The Pawns to spawn as the players of each team. Index 0 corresponds to the first team, etc.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Minigame|Settings", meta = (AllowPrivateAccess = true))
@@ -136,9 +167,6 @@ private:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Minigame|UI", meta = (AllowPrivateAccess = true))
 	TSubclassOf<UMinigameUI> MinigameUIClass;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Minigame|UI", meta = (AllowPrivateAccess = true))
-	TSubclassOf<UUserWidget> EndUIClass;
-
 	// Should splits be assigned to each player or to each team?
 	UPROPERTY(EditDefaultsOnly, Category = "Minigame|Splitscreen")
 	ESplitBy SplitBy;
@@ -167,21 +195,26 @@ private:
 	UPROPERTY(BlueprintGetter = IsInProgress, meta = (AllowPrivateAccess = true), Category = "Minigame|Gameplay")
 	bool bIsInProgress;
 
-	UPROPERTY(EditDefaultsOnly, Category="Minigame|Settings")
-	TObjectPtr<ULevelSequence> LevelSequence{};
+	UPROPERTY(EditDefaultsOnly, Category="Minigame|Cutscenes")
+	TSubclassOf<UMinigameCutsceneManager> IntroCutscene{};
+
+	UPROPERTY(EditDefaultsOnly, Category="Minigame|Cutscenes")
+	TSubclassOf<UMinigameCutsceneManager> EndingCutscene{};
 
 private:
 	TObjectPtr<UMinigameSessionSubsystem> MinigameSessionSubsystem;
 
 	TObjectPtr<UPracticeModeUI> PracticeUI{};
 
-	TObjectPtr<UUserWidget> CurrentMinigameUI{};
+	TObjectPtr<USplitscreenUI> CurrentMinigameUI{};
 
-	float TransitionDelay{ 2.f };
+	TObjectPtr<UBasePointCounter> PointCounter{};
 
-	UBasePointCounter* PointCounter{};
+	UPROPERTY()
+	TObjectPtr<UMinigameCutsceneManager> CurrentCutscene{};
 
 	// Index: Player | Value: Team of player
+	TArray<TArray<int>> Teams;
 	TArray<int> TeamsByPlayers;
 	TArray<int> TeamPoints;
 	TArray<bool> ReadyPlayers;
@@ -193,29 +226,31 @@ private:
 	// Index: Position on the results board | Value: Player number
 	TArray<int> PlayersByStandings;
 
-	TArray<TObjectPtr<AMinigamePlayer>> Players;
+	TArray<TObjectPtr<AMinigamePlayer>> Players{};
 
 	// Player spawns by player count, team, and position
 	APlayerSpawn* PlayerSpawns[4][2][4];
-	//TArray<APlayerSpawn*> PlayerSpawns;
 
 	TArray<AMinigameCapture*> SplitCameras;
 	
-	ACameraActor* EndCamera;
-
-	ULevelSequencePlayer* SequencePlayer;
+	TObjectPtr<ACameraActor> DefaultCamera;
 
 	FTimerHandle ResetTimerHandle{};
 
 	// Returns the index in playerSpawns that has the specified team and position
-	AActor* GetPlayerSpawn(int Team, int pos) const;
+	AActor* GetPlayerSpawn(int Team, int Pos) const;
+	void SpawnPlayers();
 
 	// Splits players into teams depending on the Team Type selected.
 	// Index of resultant array is the player number, value is the team number
 	TArray<int> SplitIntoTeams();
+	TArray<TArray<int>> OrganizeByTeams(TArray<int> TeamsByPlayers);
 
 	// Initializes the team points array based on team arrangement.
 	void InitPoints();
+
+	UFUNCTION()
+	void SetupGame();
 
 	UFUNCTION()
 	void StartGame();
@@ -223,7 +258,7 @@ private:
 	// Finds and stores references to minigame cameras in the level
 	void FindMinigameCameras();
 
-	// Ends the game (excluding Practice Mode where the minigame resets)
+	// Ends the game and starts transition back to board, playing any end cutscenes
 	void ProcessMinigameEnd();
 
 	void ChangeLevel();
@@ -236,11 +271,11 @@ private:
 	// Draws minigame UI whenever the minigame is started.
 	void DrawMinigameUI();
 
-	// Draws end UI when the game ends (excluding Practice Mode where the minigame resets)
-	void DrawEndUI();
-
 	// Resets the game
 	void StartReset();
+
+	USplitscreenUI* SpawnSplitscreenUI(int NumSplits);
+	void SetupMinigameUI(USplitscreenUI* SplitscreenUI);
 
 	// Alerts to log and error
 	FORCEINLINE void AlertWarning(const FString& Text) const;

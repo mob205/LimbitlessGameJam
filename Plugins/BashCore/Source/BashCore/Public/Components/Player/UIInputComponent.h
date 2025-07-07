@@ -7,6 +7,7 @@
 #include "UIInputComponent.generated.h"
 
 
+class UWidget;
 class UMenu;
 class ABashPlayerController;
 class UInputMappingContext;
@@ -73,6 +74,9 @@ public:
 	//Has User focus specific widget.
 	UFUNCTION(BlueprintCallable, Category = "Events")
 	void FocusWidget(UUserWidget* widget);
+
+	UFUNCTION(BlueprintCallable, Category = "Events")
+	UWidget* GetFocusWidget() const { return FocusedWidget; }
 	
 	//Input Delegates
 	UPROPERTY(BlueprintAssignable, Category = "Input")
@@ -121,7 +125,7 @@ protected:
 
 	//runtime fields
 	UPROPERTY()
-	TObjectPtr<UUserWidget> FocusedWidget;
+	TObjectPtr<UWidget> FocusedWidget;
 	UPROPERTY()
 	TObjectPtr<ABashPlayerController> OwningPlayer;
 private:
